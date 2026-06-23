@@ -1,0 +1,8 @@
+/target
+.cargo/
+.DS_Store
+
+# Cargo.lock is intentionally not committed: the `fluxpeer-sdk` dependency is a git
+# dependency on the core repo, which is not public yet. Generate and commit the lock
+# once the core repo is published so the git dep resolves reproducibly.
+Cargo.lock

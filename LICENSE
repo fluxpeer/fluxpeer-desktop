@@ -1,0 +1,21 @@
+fluxpeer desktop client — Copyright (C) 2026 the fluxpeer project
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+
+This program is free software: you can redistribute it and/or modify it under the
+terms of the GNU Affero General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+The full license text is in LICENSE-AGPL-3.0.txt at the repository root (or at
+https://www.gnu.org/licenses/agpl-3.0.txt). A commercial license — to use this client
+without AGPL obligations — is available: licensing@fluxpeer.org. See
+https://github.com/fluxpeer/fluxpeer/blob/main/LICENSING.md and
+https://github.com/fluxpeer/fluxpeer/blob/main/TRADEMARKS.md.
+
+ADDITIONAL PERMISSION: An App Store / managed-marketplace exception (AGPL section 7)
+applies to this client — see LICENSE-APP-STORE-EXCEPTION.md. Contributions are
+accepted under the project CLA — see CLA.md.
