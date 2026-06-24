@@ -768,7 +768,15 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             let mut out = Task::none();
             while let Ok(ev) = tray_icon::menu::MenuEvent::receiver().try_recv() {
                 match ev.id.0.as_str() {
-                    "quit" => return iced::exit(),
+                    "quit" => {
+                        // Tell the daemon to bring every network down (restore
+                        // routes/DNS) and exit, THEN quit the GUI — otherwise the
+                        // detached daemon keeps the tunnel (and intranet/overlay
+                        // reachability) alive after the app is gone.
+                        let (a, tk) = (app.addr.clone(), app.token.clone());
+                        return Task::perform(daemon_action(a, tk, json!({"cmd": "shutdown"})), Message::Acted)
+                            .chain(iced::exit());
+                    }
                     "connect_all" => {
                         let ts: Vec<_> = app.nets.iter().map(|n| act(app, json!({"cmd": "up", "iface": n.iface}))).collect();
                         out = Task::batch(ts);
