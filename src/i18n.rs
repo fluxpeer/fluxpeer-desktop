@@ -107,9 +107,11 @@ fn pair(key: &str) -> Option<(&'static str, &'static str)> {
         ("split_hint", "Comma-separated CIDRs kept off the tunnel (only applies under a full-tunnel exit).", "逗号分隔的网段不走隧道(仅全局出口时生效)。"),
         // exit-node card (two distinct ideas, spelled out)
         ("exit_card_title", "Exit node", "出口节点"),
+        ("use_exit", "Use an approved exit for internet traffic", "通过已批准的出口访问互联网"),
+        ("use_exit_desc", "Off by default. Enabling selects an approved exit automatically; IPv6 internet is blocked in full tunnel.", "默认关闭。开启后自动选择已批准的出口；全局模式下阻止 IPv6 互联网流量。"),
         ("outbound_mode", "My outbound", "本机出站"),
-        ("be_exit", "Use this device as an exit node", "把本机用作出口节点"),
-        ("be_exit_desc", "Let other members of this network reach the internet through this device. Each device sets this for itself; requires IP forwarding + NAT on this machine.", "让本网络的其他成员经本机访问外网。每台设备各自设置,本机需开启 IP 转发 + NAT。"),
+        ("be_exit", "Force this device to act as an exit locally", "在本机强制开启出口转发"),
+        ("be_exit_desc", "Off follows administrator approval. On forces local forwarding and NAT; other devices still need an approved exit route and their own opt-in.", "关闭时跟随管理员批准；开启时强制本机转发和 NAT。其他设备仍需已批准的出口路由，并自行开启全局模式。"),
         ("exit_unsupported", "Exit forwarding isn't supported on macOS yet (Linux/Windows only).", "macOS 暂不支持出口转发(仅 Linux/Windows)。"),
         // #4 peer status
         ("online", "online", "在线"),

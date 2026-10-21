@@ -530,6 +530,7 @@ struct Net {
     control: String,
     up: bool,
     exit_node: bool,
+    use_exit: String,
     force_relay: bool,
     relay_anytls: bool,
     relay_bond: bool,
@@ -643,6 +644,7 @@ enum Message {
     // #3 split-exclude + exit toggle
     SExclude(String),
     ToggleExit(bool),
+    ToggleUseExit(bool),
     SetConnMode(ConnMode),
     // #6 diagnostics / logs
     GoTo(Route),
@@ -1080,6 +1082,10 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             app.s_exclude = s;
             Task::none()
         }
+        Message::ToggleUseExit(on) => {
+            let Some(settings) = use_exit_settings(app.selected.as_deref(), on) else { return Task::none() };
+            act(app, settings)
+        }
         Message::ToggleExit(on) => {
             let Some(iface) = app.selected.clone() else { return Task::none() };
             act(app, json!({"cmd": "settings", "iface": iface, "exit_node": on}))
@@ -1509,7 +1515,7 @@ fn exit_card<'a>(app: &App, net: &Net, full_tunnel: bool) -> Element<'a, Message
     let mode = t(app.lang, if full_tunnel { "full_tunnel" } else { "split_tunnel" });
     let mut col = column![
         text(t(app.lang, "exit_card_title").to_uppercase()).size(11).color(muted_c()).font(bold()),
-        // (1) read-only: what my own outbound traffic does right now.
+        // The live mode is separate from the explicit consumer preference.
         row![
             text(t(app.lang, "outbound_mode")).size(12).color(muted_c()).width(Length::Fixed(132.0)),
             text(mode).size(13).color(text_c()),
@@ -1517,6 +1523,9 @@ fn exit_card<'a>(app: &App, net: &Net, full_tunnel: bool) -> Element<'a, Message
         .spacing(12),
     ]
     .spacing(11);
+
+    col = col.push(checkbox(t(app.lang, "use_exit"), !matches!(net.use_exit.as_str(), "" | "off")).on_toggle(Message::ToggleUseExit).size(16).text_size(13).style(check_style));
+    col = col.push(text(t(app.lang, "use_exit_desc")).size(11).color(muted_c()));
 
     // (2) the opt-in "be an exit for others" role — clearly scoped + explained.
     // Supported on Linux (iptables), Windows (WinNAT) and macOS (pf).
@@ -1769,6 +1778,7 @@ async fn load(addr: String, token: String) -> Result<Snapshot, String> {
                     control: n["control_server"].as_str().unwrap_or("").to_string(),
                     up: n["up"].as_bool().unwrap_or(false),
                     exit_node: n["exit_node"].as_bool().unwrap_or(false),
+                    use_exit: n["use_exit"].as_str().unwrap_or("off").to_string(),
                     force_relay: n["force_relay"].as_bool().unwrap_or(false),
                     relay_anytls: n["relay_anytls"].as_bool().unwrap_or(false),
                     relay_bond: n["relay_bond"].as_bool().unwrap_or(false),
@@ -1805,4 +1815,27 @@ async fn load(addr: String, token: String) -> Result<Snapshot, String> {
         }
     }
     Ok(Snapshot { nets, status })
+}
+
+/// Opting in selects an approved exit automatically; opting out restores split.
+fn use_exit_settings(iface: Option<&str>, enabled: bool) -> Option<Value> {
+    let iface = iface?;
+    Some(json!({"cmd": "settings", "iface": iface, "use_exit": if enabled { "auto" } else { "off" }}))
+}
+
+#[cfg(test)]
+mod exit_tests {
+    use super::*;
+
+    #[test]
+    fn consumer_toggle_without_selection_never_builds_a_request() {
+        assert_eq!(use_exit_settings(None, true), None);
+        assert_eq!(use_exit_settings(None, false), None);
+    }
+
+    #[test]
+    fn consumer_toggle_only_sets_use_exit_for_selected_network() {
+        assert_eq!(use_exit_settings(Some("fp0"), true), Some(json!({"cmd": "settings", "iface": "fp0", "use_exit": "auto"})));
+        assert_eq!(use_exit_settings(Some("fp1"), false), Some(json!({"cmd": "settings", "iface": "fp1", "use_exit": "off"})));
+    }
 }
