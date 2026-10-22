@@ -21,7 +21,8 @@ pub struct Tray {
 
 pub fn build() -> Option<Tray> {
     #[allow(unused_mut)]
-    let mut builder = TrayIconBuilder::new().with_tooltip("Fluxpeer").with_icon(icon(false));
+    let mut builder = TrayIconBuilder::new().with_tooltip("Fluxpeer");
+    if let Some(icon) = icon(false) { builder = builder.with_icon(icon); }
     // macOS menu-bar icons should be TEMPLATE images: the OS draws them crisp in the
     // bar's own colour (black on light, white on dark) from the alpha channel. The
     // thin colour mark was near-invisible; a template reads cleanly at 22pt.
@@ -72,7 +73,7 @@ impl Tray {
 
         // Icon reflects connection state: solid when any network is up, lighter otherwise.
         let any_up = nets.iter().any(|(_, up)| *up);
-        let _ = self.tray.set_icon(Some(icon(any_up)));
+        let _ = self.tray.set_icon(icon(any_up));
         #[cfg(target_os = "macos")]
         self.tray.set_icon_as_template(true); // set_icon can clear the template flag
     }
@@ -92,52 +93,13 @@ const TRAY_MARK: &[u8] = b"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 
 /// Rasterize the bold mesh mark into an RGBA menu-bar icon (used as a macOS template
 /// image). When `active` is false the alpha is reduced so the bar shows a lighter
 /// "nothing connected" glyph.
-fn icon(active: bool) -> tray_icon::Icon {
+fn icon(active: bool) -> Option<tray_icon::Icon> {
     let size = 44u32; // ~22pt menu bar @2x
-    let opt = resvg::usvg::Options::default();
-    let mut rgba = match resvg::usvg::Tree::from_data(TRAY_MARK, &opt) {
-        Ok(tree) => {
-            let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size).expect("pixmap");
-            let scale = size as f32 / 64.0;
-            resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
-            let mut data = pixmap.take();
-            // tiny-skia is premultiplied; tray-icon wants straight RGBA.
-            for px in data.chunks_exact_mut(4) {
-                let a = px[3] as u32;
-                #[allow(unknown_lints, clippy::manual_checked_ops)]
-                if a > 0 {
-                    px[0] = ((px[0] as u32 * 255) / a) as u8;
-                    px[1] = ((px[1] as u32 * 255) / a) as u8;
-                    px[2] = ((px[2] as u32 * 255) / a) as u8;
-                }
-            }
-            data
-        }
-        Err(_) => fallback_dot(size),
-    };
+    let mut rgba = crate::raster::render(TRAY_MARK, size)?;
     if !active {
-        // Template mode keys off alpha; lighten (don't grey) the disconnected glyph.
-        for px in rgba.chunks_exact_mut(4) {
+        for px in rgba.as_chunks_mut::<4>().0 {
             px[3] = (px[3] as u16 * 110 / 255) as u8;
         }
     }
-    tray_icon::Icon::from_rgba(rgba, size, size).expect("tray icon")
-}
-
-fn fallback_dot(size: u32) -> Vec<u8> {
-    let mut buf = vec![0u8; (size * size * 4) as usize];
-    let c = (size as f32 - 1.0) / 2.0;
-    for y in 0..size {
-        for x in 0..size {
-            let (dx, dy) = (x as f32 - c, y as f32 - c);
-            if (dx * dx + dy * dy).sqrt() <= c - 1.0 {
-                let i = ((y * size + x) * 4) as usize;
-                buf[i] = 99;
-                buf[i + 1] = 102;
-                buf[i + 2] = 241;
-                buf[i + 3] = 255;
-            }
-        }
-    }
-    buf
+    tray_icon::Icon::from_rgba(rgba, size, size).ok()
 }

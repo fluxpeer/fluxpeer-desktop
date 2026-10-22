@@ -6,6 +6,7 @@
 
 mod i18n;
 mod tray;
+mod raster;
 use i18n::{t, Lang};
 
 use iced::widget::{button, checkbox, column, container, image, pick_list, row, scrollable, text, text_editor, text_input, Space};
@@ -477,29 +478,8 @@ fn sync_tray(app: &mut App) {
 
 /// Rasterize the bagua mark to an RGBA image handle (the iced `svg` widget renders
 /// the thin strokes/tiny dots near-invisibly at nav size). Cached in `App`.
-fn logo_handle(size: u32) -> image::Handle {
-    let opt = resvg::usvg::Options::default();
-    let rgba = match resvg::usvg::Tree::from_data(LOGO, &opt) {
-        Ok(tree) => {
-            let mut pm = resvg::tiny_skia::Pixmap::new(size, size).expect("pixmap");
-            let s = size as f32 / 64.0;
-            resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(s, s), &mut pm.as_mut());
-            let mut d = pm.take();
-            for px in d.chunks_exact_mut(4) {
-                let a = px[3] as u32;
-                // a>0 already guards the divide; checked_div per channel would be noisier.
-                #[allow(unknown_lints, clippy::manual_checked_ops)]
-                if a > 0 {
-                    px[0] = ((px[0] as u32 * 255) / a) as u8;
-                    px[1] = ((px[1] as u32 * 255) / a) as u8;
-                    px[2] = ((px[2] as u32 * 255) / a) as u8;
-                }
-            }
-            d
-        }
-        Err(_) => vec![0u8; (size * size * 4) as usize],
-    };
-    image::Handle::from_rgba(size, size, rgba)
+fn logo_handle(size: u32) -> Option<image::Handle> {
+    Some(image::Handle::from_rgba(size, size, raster::render(LOGO, size)?))
 }
 
 fn main() -> iced::Result {
@@ -581,7 +561,7 @@ struct App {
     editor: text_editor::Content,
     importing: Option<ImportForm>, // a picked wg.conf awaiting control-server details
     tray_sig: String, // last tray-menu signature (nets + lang)
-    logo: image::Handle,
+    logo: Option<image::Handle>,
     route: Route,                     // #6 which pane (Networks / Diagnostics)
     offline: bool,                    // #1 daemon unreachable (connection refused)
     starting: bool,                   // #1 a Start-daemon attempt is in flight
@@ -1302,12 +1282,11 @@ fn editor_view(app: &App) -> Element<'_, Message> {
 }
 
 fn sidebar(app: &App) -> Element<'_, Message> {
-    let head = row![
-        image(app.logo.clone()).width(30).height(30),
-        text("Fluxpeer").size(17).font(bold()).color(text_c()),
-        Space::with_width(Length::Fill),
-        button(text(app.lang.label()).size(11)).style(ghost_btn).padding([4, 8]).on_press(Message::SetLang),
-    ]
+    let mut head = row![];
+    if let Some(logo) = &app.logo { head = head.push(image(logo.clone()).width(30).height(30)); }
+    let head = head.push(text("Fluxpeer").size(17).font(bold()).color(text_c()))
+        .push(Space::with_width(Length::Fill))
+        .push(button(text(app.lang.label()).size(11)).style(ghost_btn).padding([4, 8]).on_press(Message::SetLang))
     .spacing(6)
     .align_y(iced::Alignment::Center);
 
