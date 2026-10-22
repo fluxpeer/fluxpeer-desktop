@@ -17,6 +17,12 @@ the `fluxpeer` binary installed and the daemon running (the app can start it for
 Authentication to the local daemon uses a bearer token supplied via the
 `FLUXPEER_DAEMON_TOKEN` environment variable (the same token the daemon writes/expects).
 
+The **Kill switch** setting protects Linux clients only. macOS client kill-switch
+is not supported in this release; an active request returns an explicit error.
+The macOS **Force this device to act as an exit locally** setting enables provider
+NAT through an independent PF anchor; it does not protect this Mac's client
+traffic when an exit fails.
+
 ### Environment variables
 
 | Variable | Purpose |
