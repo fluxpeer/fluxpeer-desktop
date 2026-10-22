@@ -7,6 +7,7 @@
 mod i18n;
 mod tray;
 mod raster;
+mod quit;
 use i18n::{t, Lang};
 
 use iced::widget::{button, checkbox, column, container, image, pick_list, row, scrollable, text, text_editor, text_input, Space};
@@ -570,6 +571,7 @@ struct App {
     logs_iface: Option<String>,       // which iface app.logs belongs to
     launch_login: bool,               // #5 launch-at-login enabled (plist present)
     dark: bool,                       // dark theme on/off (system-detected at boot)
+    quit: quit::QuitState,
     adding: bool,                     // the "add a network" pane is open
 }
 
@@ -617,6 +619,9 @@ enum Message {
     ImpCancel,
     ImpDone(Result<String, String>),
     Acted(Result<String, String>),
+    QuitFinished(Result<(), String>),
+    QuitAnyway,
+    QuitCancel,
     // #2 leave
     Leave(String),
     LeaveConfirm(String),
@@ -712,6 +717,7 @@ fn boot() -> (App, Task<Message>) {
         logs_iface: None,
         launch_login,
         dark,
+        quit: quit::QuitState::default(),
         adding: std::env::var("FLUXPEER_VIEW").is_ok_and(|v| v.starts_with("add")),
     };
     (app, Task::perform(load(addr, token), Message::Loaded))
@@ -751,13 +757,8 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             while let Ok(ev) = tray_icon::menu::MenuEvent::receiver().try_recv() {
                 match ev.id.0.as_str() {
                     "quit" => {
-                        // Tell the daemon to bring every network down (restore
-                        // routes/DNS) and exit, THEN quit the GUI — otherwise the
-                        // detached daemon keeps the tunnel (and intranet/overlay
-                        // reachability) alive after the app is gone.
-                        let (a, tk) = (app.addr.clone(), app.token.clone());
-                        return Task::perform(daemon_action(a, tk, json!({"cmd": "shutdown"})), Message::Acted)
-                            .chain(iced::exit());
+                        if !app.quit.begin() { return Task::none(); }
+                        return Task::perform(disconnect_for_quit(app.addr.clone(), app.token.clone()), Message::QuitFinished);
                     }
                     "connect_all" => {
                         let ts: Vec<_> = app.nets.iter().map(|n| act(app, json!({"cmd": "up", "iface": n.iface}))).collect();
@@ -1034,6 +1035,13 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             app.editing = None;
             Task::none()
         }
+        Message::QuitFinished(result) => {
+            if app.quit.complete(result) { iced::exit() } else { show_window() }
+        }
+        Message::QuitAnyway => {
+            if app.quit.can_force() { iced::exit() } else { Task::none() }
+        }
+        Message::QuitCancel => { app.quit = quit::QuitState::Idle; Task::none() }
         Message::Acted(Err(e)) => {
             app.msg = e;
             refresh(app)
@@ -1151,6 +1159,16 @@ fn daemon_unreachable(e: &str) -> bool {
 
 fn view(app: &App) -> Element<'_, Message> {
     set_dark(app.dark); // style closures run later this frame on this thread
+    if let quit::QuitState::Failed(error) = &app.quit {
+        let dialog = container(column![
+            text(format!("{}: {error}", t(app.lang, "disconnect_failed"))).size(18),
+            row![
+                button(text(t(app.lang, "quit_anyway"))).on_press(Message::QuitAnyway),
+                button(text(t(app.lang, "cancel"))).on_press(Message::QuitCancel),
+            ].spacing(12),
+        ].spacing(20)).padding(24).max_width(620).style(card_style);
+        return container(dialog).padding(24).center_x(Length::Fill).center_y(Length::Fill).into();
+    }
     if app.importing.is_some() {
         import_view(app)
     } else if app.adding {
@@ -1731,6 +1749,13 @@ async fn daemon_call(addr: String, token: String, mut body: Value) -> Result<Val
     serde_json::from_slice(&buf).map_err(|e| format!("decode: {e}"))
 }
 
+async fn disconnect_for_quit(addr: String, token: String) -> Result<(), String> {
+    let value = tokio::time::timeout(std::time::Duration::from_secs(30),
+        daemon_call(addr, token, json!({"cmd":"shutdown"}))).await
+        .map_err(|_| "daemon disconnection timed out".to_string())??;
+    quit::check_ack(value)
+}
+
 async fn daemon_action(addr: String, token: String, body: Value) -> Result<String, String> {
     let v = daemon_call(addr, token, body).await?;
     match v.get("error").and_then(|x| x.as_str()) {
@@ -1816,5 +1841,32 @@ mod exit_tests {
     fn consumer_toggle_only_sets_use_exit_for_selected_network() {
         assert_eq!(use_exit_settings(Some("fp0"), true), Some(json!({"cmd": "settings", "iface": "fp0", "use_exit": "auto"})));
         assert_eq!(use_exit_settings(Some("fp1"), false), Some(json!({"cmd": "settings", "iface": "fp1", "use_exit": "off"})));
+    }
+}
+
+#[cfg(test)]
+mod quit_rpc_tests {
+    use super::*;
+    #[test]
+    fn quit_rpc_checks_token_and_does_not_accept_errors_or_missing_ack() {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+            for (reply, succeeds) in [(json!({"ok":true,"shutdown":true}), true),
+                (json!({"error":"cleanup failed"}), false), (json!({"ok":true}), false)] {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let addr = listener.local_addr().unwrap().to_string();
+                let server = tokio::spawn(async move {
+                    let mut reader = BufReader::new(listener.accept().await.unwrap().0);
+                    let mut request = String::new(); reader.read_line(&mut request).await.unwrap();
+                    assert_eq!(serde_json::from_str::<Value>(&request).unwrap(), json!({"cmd":"shutdown","auth":"test-token"}));
+                    reader.into_inner().write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+                });
+                assert_eq!(disconnect_for_quit(addr, "test-token".into()).await.is_ok(), succeeds);
+                server.await.unwrap();
+            }
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap().to_string(); drop(listener);
+            assert!(disconnect_for_quit(addr, "test-token".into()).await.is_err());
+        });
     }
 }

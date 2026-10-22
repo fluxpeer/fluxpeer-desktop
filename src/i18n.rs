@@ -88,6 +88,8 @@ fn pair(key: &str) -> Option<(&'static str, &'static str)> {
         ("connect_all", "Connect all", "全部连接"),
         ("disconnect_all", "Disconnect all", "全部断开"),
         ("quit", "Quit Fluxpeer", "退出 Fluxpeer"),
+        ("disconnect_failed", "Disconnection failed", "断开失败"),
+        ("quit_anyway", "Quit anyway (tunnels remain running)", "仍然退出（隧道保持运行）"),
         // #2 leave network
         ("leave", "Leave", "离开"),
         ("leave_q", "Leave this network? Its local config is deleted (re-join with the token).", "离开此网络?将删除本地配置(可凭 token 重新加入)。"),
