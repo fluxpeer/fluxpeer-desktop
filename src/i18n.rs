@@ -110,6 +110,10 @@ fn pair(key: &str) -> Option<(&'static str, &'static str)> {
         // exit-node card (two distinct ideas, spelled out)
         ("exit_card_title", "Exit node", "出口节点"),
         ("use_exit", "Use an approved exit for internet traffic", "通过已批准的出口访问互联网"),
+        ("dismiss_error", "Dismiss", "关闭提示"),
+        ("kill_switch", "Kill switch", "断网保护"),
+        ("kill_switch_dns_blocked_hint", "Connect an exit or disable kill-switch to resolve new carrier names.", "连接出口或关闭断网保护，以解析新的载体域名。"),
+        ("kill_switch_desc", "With Use exit enabled, block internet traffic if the tunnel fails. Linux only; disconnect to release.", "使用出口时，隧道故障将阻止互联网流量。仅支持 Linux；断开连接后解除。"),
         ("use_exit_desc", "Off by default. Enabling selects an approved exit automatically; IPv6 internet is blocked in full tunnel.", "默认关闭。开启后自动选择已批准的出口；全局模式下阻止 IPv6 互联网流量。"),
         ("outbound_mode", "My outbound", "本机出站"),
         ("be_exit", "Force this device to act as an exit locally", "在本机强制开启出口转发"),

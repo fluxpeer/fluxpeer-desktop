@@ -512,12 +512,15 @@ struct Net {
     up: bool,
     exit_node: bool,
     use_exit: String,
+    kill_switch: bool,
+    last_error: Option<String>,
     force_relay: bool,
     relay_anytls: bool,
     relay_bond: bool,
 }
 #[derive(Clone, Debug, Default)]
 struct Iface {
+    last_error: Option<String>,
     address: String,
     public_key: String,
     listen_port: u64,
@@ -552,6 +555,7 @@ struct App {
     selected: Option<String>,
     join_input: String,
     msg: String,
+    action_error: Option<String>,
     prev: std::collections::HashMap<String, (u64, u64, std::time::Instant)>,
     rate: std::collections::HashMap<String, (f64, f64)>,
     s_mtu: String,
@@ -619,6 +623,7 @@ enum Message {
     ImpCancel,
     ImpDone(Result<String, String>),
     Acted(Result<String, String>),
+    DismissActionError,
     QuitFinished(Result<(), String>),
     QuitAnyway,
     QuitCancel,
@@ -630,6 +635,7 @@ enum Message {
     SExclude(String),
     ToggleExit(bool),
     ToggleUseExit(bool),
+    ToggleKillSwitch(bool),
     SetConnMode(ConnMode),
     // #6 diagnostics / logs
     GoTo(Route),
@@ -698,6 +704,7 @@ fn boot() -> (App, Task<Message>) {
         selected: None,
         join_input: String::new(),
         msg: String::new(),
+        action_error: None,
         prev: std::collections::HashMap::new(),
         rate: std::collections::HashMap::new(),
         s_mtu: String::new(),
@@ -1043,10 +1050,11 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::QuitCancel => { app.quit = quit::QuitState::Idle; Task::none() }
         Message::Acted(Err(e)) => {
-            app.msg = e;
+            app.action_error = Some(e);
             refresh(app)
         }
-        Message::Acted(Ok(_)) => refresh(app),
+        Message::Acted(Ok(_)) => { app.action_error = None; refresh(app) },
+        Message::DismissActionError => { app.action_error = None; Task::none() },
 
         // #2 leave network (two-step confirm)
         Message::Leave(iface) => {
@@ -1072,6 +1080,10 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::ToggleUseExit(on) => {
             let Some(settings) = use_exit_settings(app.selected.as_deref(), on) else { return Task::none() };
+            act(app, settings)
+        }
+        Message::ToggleKillSwitch(on) => {
+            let Some(settings) = kill_switch_settings(app.selected.as_deref(), on) else { return Task::none() };
             act(app, settings)
         }
         Message::ToggleExit(on) => {
@@ -1169,7 +1181,7 @@ fn view(app: &App) -> Element<'_, Message> {
         ].spacing(20)).padding(24).max_width(620).style(card_style);
         return container(dialog).padding(24).center_x(Length::Fill).center_y(Length::Fill).into();
     }
-    if app.importing.is_some() {
+    let content: Element<'_, Message> = if app.importing.is_some() {
         import_view(app)
     } else if app.adding {
         row![sidebar(app), add_view(app)].into()
@@ -1179,7 +1191,14 @@ fn view(app: &App) -> Element<'_, Message> {
         row![sidebar(app), diagnostics_view(app)].into()
     } else {
         row![sidebar(app), detail(app)].into()
-    }
+    };
+    if let Some(error) = &app.action_error {
+        let notice = container(row![
+            text(error).size(13).color(text_c()).width(Length::Fill),
+            button(text(t(app.lang, "dismiss_error"))).on_press(Message::DismissActionError).style(ghost_btn),
+        ].spacing(12).align_y(iced::Alignment::Center)).padding(12).width(Length::Fill).style(warn_style);
+        column![notice, content].into()
+    } else { content }
 }
 
 /// A 1px horizontal rule that fills its slot (used in the "or" divider).
@@ -1457,6 +1476,13 @@ fn detail(app: &App) -> Element<'_, Message> {
     }
     body = body.push(section(t(app.lang, "interface"), irows));
 
+    if let Some(error) = st.and_then(|s| s.iface.last_error.as_ref()).or(net.last_error.as_ref()) {
+        body = body.push(text(error.clone()).size(12).color(red_c()));
+        if error.contains("kill_switch_dns_blocked:") {
+            body = body.push(text(t(app.lang, "kill_switch_dns_blocked_hint")).size(12).color(red_c()));
+        }
+    }
+
     // Exit / routing card — kept next to the interface info, above the peer list.
     body = body.push(exit_card(app, &net, full_tunnel));
 
@@ -1523,6 +1549,8 @@ fn exit_card<'a>(app: &App, net: &Net, full_tunnel: bool) -> Element<'a, Message
 
     col = col.push(checkbox(t(app.lang, "use_exit"), !matches!(net.use_exit.as_str(), "" | "off")).on_toggle(Message::ToggleUseExit).size(16).text_size(13).style(check_style));
     col = col.push(text(t(app.lang, "use_exit_desc")).size(11).color(muted_c()));
+    col = col.push(checkbox(t(app.lang, "kill_switch"), net.kill_switch).on_toggle(Message::ToggleKillSwitch).size(16).text_size(13).style(check_style));
+    col = col.push(text(t(app.lang, "kill_switch_desc")).size(11).color(muted_c()));
 
     // (2) the opt-in "be an exit for others" role — clearly scoped + explained.
     // Supported on Linux (iptables), Windows (WinNAT) and macOS (pf).
@@ -1783,6 +1811,8 @@ async fn load(addr: String, token: String) -> Result<Snapshot, String> {
                     up: n["up"].as_bool().unwrap_or(false),
                     exit_node: n["exit_node"].as_bool().unwrap_or(false),
                     use_exit: n["use_exit"].as_str().unwrap_or("off").to_string(),
+                    kill_switch: n["kill_switch"].as_bool().unwrap_or(false),
+                    last_error: status_error(&n["last_error"]),
                     force_relay: n["force_relay"].as_bool().unwrap_or(false),
                     relay_anytls: n["relay_anytls"].as_bool().unwrap_or(false),
                     relay_bond: n["relay_bond"].as_bool().unwrap_or(false),
@@ -1795,6 +1825,7 @@ async fn load(addr: String, token: String) -> Result<Snapshot, String> {
         for s in arr {
             let name = s["interface"]["name"].as_str().unwrap_or("").to_string();
             let iface = Iface {
+                last_error: status_error(&s["interface"]["last_error"]),
                 address: s["interface"]["address"].as_str().unwrap_or("").to_string(),
                 public_key: s["interface"]["public_key"].as_str().unwrap_or("").to_string(),
                 listen_port: s["interface"]["listen_port"].as_u64().unwrap_or(0),
@@ -1821,6 +1852,15 @@ async fn load(addr: String, token: String) -> Result<Snapshot, String> {
     Ok(Snapshot { nets, status })
 }
 
+// Startup failures are strings; a running engine reports structured ApplyError.
+fn status_error(value: &Value) -> Option<String> {
+    value.as_str().or_else(|| value.get("stderr").and_then(Value::as_str)).filter(|s| !s.is_empty()).map(String::from)
+}
+
+fn kill_switch_settings(iface: Option<&str>, enabled: bool) -> Option<Value> {
+    Some(json!({"cmd":"settings", "iface":iface?, "kill_switch":enabled}))
+}
+
 /// Opting in selects an approved exit automatically; opting out restores split.
 fn use_exit_settings(iface: Option<&str>, enabled: bool) -> Option<Value> {
     let iface = iface?;
@@ -1830,6 +1870,65 @@ fn use_exit_settings(iface: Option<&str>, enabled: bool) -> Option<Value> {
 #[cfg(test)]
 mod exit_tests {
     use super::*;
+
+    fn fixture_app() -> App {
+        App { addr: String::new(), token: String::new(), lang: Lang::En, nets: vec![], status: Default::default(), selected: None,
+            join_input: String::new(), msg: String::new(), action_error: None, prev: Default::default(), rate: Default::default(),
+            s_mtu: String::new(), s_dns: String::new(), s_ep: String::new(), s_exclude: String::new(), editing: None,
+            editor: text_editor::Content::new(), importing: None, tray_sig: String::new(), logo: None, route: Route::default(),
+            offline: false, starting: false, confirm_leave: None, logs: String::new(), logs_iface: None, launch_login: false,
+            dark: false, quit: quit::QuitState::default(), adding: false }
+    }
+
+    #[test]
+    fn action_conflict_survives_status_refresh_until_dismissed_or_successful_retry() {
+        let mut app = fixture_app();
+        let message = "kill-switch active on fp0; disable it first";
+        let _ = update(&mut app, Message::Acted(Err(message.into())));
+        let _ = update(&mut app, Message::Loaded(Ok(Snapshot::default())));
+        assert_eq!(app.action_error.as_deref(), Some(message));
+        let _ = view(&app);
+        let _ = update(&mut app, Message::DismissActionError);
+        assert!(app.action_error.is_none());
+        let _ = update(&mut app, Message::Acted(Err(message.into())));
+        let _ = update(&mut app, Message::Acted(Ok("{}".into())));
+        assert!(app.action_error.is_none());
+    }
+
+    #[test]
+    fn kill_switch_conflict_reaches_desktop_action_error_unchanged() {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+            let message = "kill-switch active on fp0; disable it first";
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap().to_string();
+            let server = tokio::spawn(async move {
+                let mut reader = BufReader::new(listener.accept().await.unwrap().0);
+                let mut request = String::new(); reader.read_line(&mut request).await.unwrap();
+                assert_eq!(serde_json::from_str::<Value>(&request).unwrap(), json!({"cmd":"up","iface":"fp1","auth":"test-token"}));
+                let reply = json!({"status":409,"error":message});
+                reader.into_inner().write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+            });
+            assert_eq!(daemon_action(addr, "test-token".into(), json!({"cmd":"up","iface":"fp1"})).await.unwrap_err(), message);
+            server.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn blocked_carrier_dns_is_visible_for_startup_and_running_status() {
+        let error = "kill_switch_dns_blocked: relay.test; connect an exit or disable kill-switch";
+        assert_eq!(status_error(&json!(error)).as_deref(), Some(error));
+        assert_eq!(status_error(&json!({"command":["kill-switch", "DNS"], "stderr":error})).as_deref(), Some(error));
+        assert_eq!(status_error(&Value::Null), None);
+        assert_eq!(status_error(&json!({})), None);
+    }
+
+    #[test]
+    fn kill_switch_only_changes_the_selected_network_local_policy() {
+        assert_eq!(kill_switch_settings(None, true), None);
+        assert_eq!(kill_switch_settings(Some("fp0"), true), Some(json!({"cmd":"settings", "iface":"fp0", "kill_switch":true})));
+        assert_eq!(kill_switch_settings(Some("fp1"), false), Some(json!({"cmd":"settings", "iface":"fp1", "kill_switch":false})));
+    }
 
     #[test]
     fn consumer_toggle_without_selection_never_builds_a_request() {
