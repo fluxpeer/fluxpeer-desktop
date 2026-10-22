@@ -163,6 +163,7 @@ fn set_launch_at_login(_on: bool) -> Result<(), String> {
 
 /// Path to the `fluxpeer` daemon binary: a sibling of this desktop exe if present
 /// (the packaged layout), else trust PATH.
+#[cfg(target_os = "macos")]
 fn daemon_bin() -> String {
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
@@ -208,7 +209,11 @@ async fn start_daemon() -> Result<String, String> {
             }
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        Err("Start the daemon in an elevated PowerShell: fluxpeer.exe up".into())
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         Err("Start the daemon manually:  sudo fluxpeer up".into())
     }
@@ -1951,7 +1956,9 @@ mod quit_rpc_tests {
         tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
             use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
             for (reply, succeeds) in [(json!({"ok":true,"shutdown":true}), true),
-                (json!({"error":"cleanup failed"}), false), (json!({"ok":true}), false)] {
+                (json!({"error":"cleanup failed"}), false),
+                (json!({"error":"fp0: forced termination; network cleanup may be incomplete"}), false),
+                (json!({"ok":true}), false)] {
                 let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
                 let addr = listener.local_addr().unwrap().to_string();
                 let server = tokio::spawn(async move {

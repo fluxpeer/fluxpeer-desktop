@@ -17,11 +17,18 @@ the `fluxpeer` binary installed and the daemon running (the app can start it for
 Authentication to the local daemon uses a bearer token supplied via the
 `FLUXPEER_DAEMON_TOKEN` environment variable (the same token the daemon writes/expects).
 
-The **Kill switch** setting protects Linux clients only. macOS client kill-switch
-is not supported in this release; an active request returns an explicit error.
+The **Kill switch** setting protects Linux clients only. macOS and Windows client
+kill-switch are not supported in this release; an active request returns an explicit error.
 The macOS **Force this device to act as an exit locally** setting enables provider
 NAT through an independent PF anchor; it does not protect this Mac's client
 traffic when an exit fails.
+
+On Windows, daemon down/shutdown requests member cleanup through a private pipe
+and waits for the process to finish. Timeout or cleanup failure keeps Quit in the
+failure dialog; forced termination can leave DNS/NAT state even after route
+recovery. The explicit quit override closes the GUI without claiming cleanup
+succeeded. Windows runtime validation remains pending; cross-compilation alone
+does not verify the driver, route table or service installation.
 
 ### Environment variables
 
